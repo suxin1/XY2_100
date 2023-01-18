@@ -29,6 +29,8 @@ void * XY2_100::pingBuffer;
 void * XY2_100::pongBuffer;
 DMAChannel XY2_100::dma;
 
+// static: file scope variable; DMAMEM: specifies this variable save to dmabuffers
+// DMAMEM: #define DMAMEM __attribute__ ((section(".dmabuffers"), used))
 static DMAMEM int pingMemory[10];
 static DMAMEM int pongMemory[10];
 
@@ -46,7 +48,7 @@ XY2_100::XY2_100()
 void XY2_100::begin(void)
 {
 	uint32_t bufsize, frequency;
-	bufsize = 40;
+	bufsize = 40; // simply the size of pingMemory and pongMemory;
 
 	// set up the buffers
 	memset(pingBuffer, 0, bufsize);
@@ -54,7 +56,7 @@ void XY2_100::begin(void)
 
 	// configure the 8 output pins
 	GPIOD_PCOR = 0xFF;
-  GPIOD_PDOR = 0x0F;
+  GPIOD_PDOR = 0x0F; // 0000 1111
 	pinMode(2, OUTPUT);	 // bit 0
 	pinMode(14, OUTPUT); // bit 1
 	pinMode(7, OUTPUT);  // bit 2
