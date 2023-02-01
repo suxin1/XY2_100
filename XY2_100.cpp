@@ -59,6 +59,8 @@ void XY2_100::begin(void) {
     memset(pingBuffer, 0, bufsize);
     memset(pongBuffer, 0, bufsize);
 
+#if defined(__IMXRT1062__)
+#endif
     // configure the 8 output pins
     GPIOD_PCOR = 0xFF;                       // clear Data Output Register (PDOR). 0: not change; 1: to logic 0;
     GPIOD_PDOR = 0x0F;                       // Port data out put. data need to be transferred goes to this register.
