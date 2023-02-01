@@ -60,6 +60,7 @@ void XY2_100::begin(void) {
     memset(pongBuffer, 0, bufsize);
 
 #if defined(__IMXRT1062__)
+    GPIO1_DR = 0x0F;
 #endif
     // configure the 8 output pins
     GPIOD_PCOR = 0xFF;                       // clear Data Output Register (PDOR). 0: not change; 1: to logic 0;
