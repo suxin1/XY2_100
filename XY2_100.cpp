@@ -44,8 +44,8 @@ DMAChannel XY2_100::dma;
 
 // static: file scope variable; DMAMEM: specifies this variable save to dmabuffers
 // DMAMEM: #define DMAMEM __attribute__ ((section(".dmabuffers"), used))
-static DMAMEM int pingMemory[10];
-static DMAMEM int pongMemory[10];
+static DMAMEM uint32_t pingMemory[10];
+static DMAMEM uint32_t pongMemory[10];
 
 // Bit0: 0=Ping buffer content is beeing transmitted
 static volatile uint8_t txPing = 0;
@@ -74,19 +74,25 @@ void XY2_100::begin(void) {
     dma.disableOnCompletion();
     dma.interruptAtCompletion();              // will call isr when complete (buffer has read out, bufsize triggers is meet).
 
-#if defined(__IMXRT1062__)
-    // GPIO1_DR
+#if defined(__IMXRT1062__)                    // Teensy 4.1
+    // GPIO1_DR 32bit, here we utilize 16~23bit
     GPIO1_DR_CLEAR = 0xFFFFFFFF;
     GPIO1_DR = 0xFFFFFFFF & GPIO_DATA_OUT_MASK;
 
-    pinMode(19, OUTPUT);          // GPIO_AD_B1_00 GPIO1_IO16
-    pinMode(18, OUTPUT);          // GPIO_AD_B1_01
-    pinMode(14, OUTPUT);          // GPIO_AD_B1_02
-    pinMode(15, OUTPUT);          // GPIO_AD_B1_03
-    pinMode(40, OUTPUT);          // GPIO_AD_B1_04
-    pinMode(41, OUTPUT);          // GPIO_AD_B1_05
-    pinMode(17, OUTPUT);          // GPIO_AD_B1_06
-    pinMode(16, OUTPUT);          // GPIO_AD_B1_07 GPIO1_IO23
+    IOMUXC_GPR_GPR26 &= ~(0x00FF0000);             // select standard GPIO instead of fast GPIO. 0 for GPIO1, 1 for GPIO6
+    GPIO1_GDIR |= 0x00FF0000;                      // set 16~23 bit as output. 0 for input, 1 for output.
+
+    IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_00 = 5;       // route pad AD_B1_00 (GPIO1_IO16) to GPIO module.
+
+    pinMode(19, OUTPUT);                // GPIO_AD_B1_00 GPIO1_IO16
+
+    pinMode(18, OUTPUT);                // GPIO_AD_B1_01
+    pinMode(14, OUTPUT);                // GPIO_AD_B1_02
+    pinMode(15, OUTPUT);                // GPIO_AD_B1_03
+    pinMode(40, OUTPUT);                // GPIO_AD_B1_04
+    pinMode(41, OUTPUT);                // GPIO_AD_B1_05
+    pinMode(17, OUTPUT);                // GPIO_AD_B1_06
+    pinMode(16, OUTPUT);                // GPIO_AD_B1_07 GPIO1_IO23
 
     dma.destination(GPIO1_DR);
 #endif
