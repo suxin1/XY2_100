@@ -33,7 +33,7 @@
 
 #if defined(__IMXRT1062__)
 #define GPIO_DATA_OUT_MASK 0x00FF0000;
-#define GPIO_DR_16_8(a) a << 16;
+#define GPIO1_XY2_16_8(a) a << 16;
 #endif
 
 uint16_t XY2_100::lastX;
@@ -44,8 +44,8 @@ DMAChannel XY2_100::dma;
 
 // static: file scope variable; DMAMEM: specifies this variable save to dmabuffers
 // DMAMEM: #define DMAMEM __attribute__ ((section(".dmabuffers"), used))
-static DMAMEM int pingMemory[10];
-static DMAMEM int pongMemory[10];
+static DMAMEM uint32_t pingMemory[10];
+static DMAMEM uint32_t pongMemory[10];
 
 // Bit0: 0=Ping buffer content is beeing transmitted
 static volatile uint8_t txPing = 0;
@@ -74,21 +74,25 @@ void XY2_100::begin(void) {
     dma.disableOnCompletion();
     dma.interruptAtCompletion();              // will call isr when complete (buffer has read out, bufsize triggers is meet).
 
-#if defined(__IMXRT1062__)
-    // GPIO1_DR
+#if defined(__IMXRT1062__)                    // Teensy 4.1
+    // GPIO1_DR 32bit, here we utilize 16~23bit
     GPIO1_DR_CLEAR = 0xFFFFFFFF;
     GPIO1_DR = 0xFFFFFFFF & GPIO_DATA_OUT_MASK;
 
-    pinMode(19, OUTPUT);          // GPIO_AD_B1_00 GPIO1_IO16
-    pinMode(18, OUTPUT);          // GPIO_AD_B1_01
-    pinMode(14, OUTPUT);          // GPIO_AD_B1_02
-    pinMode(15, OUTPUT);          // GPIO_AD_B1_03
-    pinMode(40, OUTPUT);          // GPIO_AD_B1_04
-    pinMode(41, OUTPUT);          // GPIO_AD_B1_05
-    pinMode(17, OUTPUT);          // GPIO_AD_B1_06
-    pinMode(16, OUTPUT);          // GPIO_AD_B1_07 GPIO1_IO23
+    IOMUXC_GPR_GPR26 &= ~(0x00FF0000);             // select standard GPIO instead of fast GPIO. 0 for GPIO1, 1 for GPIO6
+    GPIO1_GDIR |= GPIO1_XY2_16_8(0xFF);            // set 16~23 bit as output. 0 for input, 1 for output.
+
+    IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_00 = 5;       // route pin19 pad AD_B1_00 (GPIO1_IO16) to GPIO module.
+    IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_01 = 5;       // route pin18 pad AD_B1_00 (GPIO1_IO17) to GPIO module.
+    IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_02 = 5;       // route pin14 pad AD_B1_00 (GPIO1_IO18) to GPIO module.
+    IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_03 = 5;       // route pin15 pad AD_B1_00 (GPIO1_IO19) to GPIO module.
+    IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_04 = 5;       // route pin40 pad AD_B1_00 (GPIO1_IO20) to GPIO module.
+    IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_05 = 5;       // route pin41 pad AD_B1_00 (GPIO1_IO21) to GPIO module.
+    IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_06 = 5;       // route pin17 pad AD_B1_00 (GPIO1_IO22) to GPIO module.
+    IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_07 = 5;       // route pin16 pad AD_B1_00 (GPIO1_IO23) to GPIO module.
 
     dma.destination(GPIO1_DR);
+    dma.triggerAtHardwareEvent(DMAMUX_SOURCE_FLEXIO1_REQUEST0);
 #endif
 
 #if defined(__MK20DX256__) || defined(__MKL26Z64__)
@@ -201,18 +205,18 @@ void XY2_100::isr(void) {
     FTM2_SC = 0;
     FTM2_SC = FTM_SC_TOF;
     uint32_t tmp __attribute__((unused));
-      FTM2_C0SC = 0x28;
-      tmp = FTM2_C0SC;         // clear any prior timer DMA triggers
-      FTM2_C0SC = 0x69;
+    FTM2_C0SC = 0x28;
+    tmp = FTM2_C0SC;         // clear any prior timer DMA triggers
+    FTM2_C0SC = 0x69;
     FTM2_CNT = 0;
-      dma.enable();		// enable DMA channel
+    dma.enable();		// enable DMA channel
     FTM2_SC = FTM_SC_CLKS(1) | FTM_SC_PS(0); // restart FTM2 timer
 #elif defined(__MKL26Z64__)
     FTM2_SC = 0;
     FTM2_SC = FTM_SC_TOF;
-      dma.enable();		// enable DMA channel
-      FTM2_CNT = 0; // writing any value resets counter
-      FTM2_SC = FTM_SC_DMA | FTM_SC_CLKS(1) | FTM_SC_PS(0);
+    dma.enable();		// enable DMA channel
+    FTM2_CNT = 0; // writing any value resets counter
+    FTM2_SC = FTM_SC_DMA | FTM_SC_CLKS(1) | FTM_SC_PS(0);
 #endif
 
     //digitalWriteFast(9, HIGH); // oscilloscope trigger
@@ -235,7 +239,7 @@ void XY2_100::setXY(uint16_t X, uint16_t Y) {
 
     // (000x xxxx xxxx xxxx xxx0 | 0010 0000 0000 0000 0000) & 0011 1111 1111 1111 1110
     // => 001x xxxx xxxx xxxx xxx0 & 0011 1111 1111 1111 1110
-    // => 001x xxxx xxxx xxxx xxx0 (channel data format, last one is parity check);
+    // => 001x xxxx xxxx xxxx xxx0 (channel sequential data, last one is parity check);
     uint32_t Ch1 = (((uint32_t) X << 1) | 0x20000ul) & 0x3fffeul;
     uint32_t Ch2 = (((uint32_t) Y << 1) | 0x20000ul) & 0x3fffeul;
 
@@ -247,6 +251,7 @@ void XY2_100::setXY(uint16_t X, uint16_t Y) {
     // every 16-bit word generates a clock pulse also
     // 1101 0010 1100 0011, 1001 0110 1000 0111, 0101 1010 0100 1011, 0001 1110 0000 1111
     const uint16_t Sync1[4] = {0xd2c3, 0x9687, 0x5a4b, 0x1e0f};
+    // 1111 0000 1110 0001, 1011 0100 1010 0101, 0111 1000 0110 1001, 0011 1100 0010 1101
     const uint16_t Sync0[4] = {0xf0e1, 0xb4a5, 0x7869, 0x3c2d};
 
     lastX = X;
@@ -267,6 +272,17 @@ void XY2_100::setXY(uint16_t X, uint16_t Y) {
     }
 
     // Clock cycle: 1-0, Sync 111...0
+    /**
+     * suppose data is 001a bcde ...
+     *   bit 7 CLOCK+ <- |1|0 |1|0 |1|0 |1|0|...|1|0|
+     *   bit 6 SYNC+  <- |1|1 |1|1 |1|1 |1|1|...|0|0|
+     *   bit 5 CHAN1+ <- |0|0 |0|0 |1|1 |a|a|...|0|0|
+     *   bit 4 CHAN2+ <- |0|0 |0|0 |1|1 |a|a|...|1|1|
+     *   bit 3 CLOCK- <- |1|0 |1|0 |1|0 |1|0|...|1|0|
+     *   bit 2 SYNC-  <- |1|1 |1|1 |1|1 |1|1|...|0|0|
+     *   bit 1 CHAN1- <- |0|0 |0|0 |1|1 |a|a|...|0|0|
+     *   bit 0 CHAN2- <- |0|0 |0|0 |1|1 |a|a|...|0|0|
+     */
     for (int i = 19; i >= 0; i--) {
         int j = 0;
         uint32_t d;
@@ -277,14 +293,14 @@ void XY2_100::setXY(uint16_t X, uint16_t Y) {
         if (Ch1 & (1 << i)) j = 1;
         if (Ch2 & (1 << i)) j |= 2;
 
-        d = Sync1[j];
+        d = Sync1[j]; // 1101 0010 1100 0011
         i--;
         j = 0;
         if (Ch1 & (1 << i)) j = 1;
         if (Ch2 & (1 << i)) j |= 2;
 
         if (i != 0) {
-            d |= (uint32_t) Sync1[j] << 16;
+            d |= (uint32_t) Sync1[j] << 16; // 1101 0010 | 1100 0011 | 1101 0010 | 1100 0011
         } else {
             d |= (uint32_t) Sync0[j] << 16;
         }
