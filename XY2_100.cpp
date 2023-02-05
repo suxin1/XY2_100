@@ -31,9 +31,22 @@
 #include <string.h>
 #include "XY2_100.h"
 
+
+
 #if defined(__IMXRT1062__)
-#define GPIO_DATA_OUT_MASK 0x00FF0000;
-#define GPIO1_XY2_16_8(a) a << 16;
+#define GPIO_PIN_SHIFT 16
+#define DMA_MEM_SIZE 20
+
+typedef uint16_t uint_dma;
+typedef uint64_t uint_per_cycle;
+#endif
+
+#if defined(__MK20DX256__) || defined(__MKL26Z64__)
+#define GPIO_PIN_SHIFT 16
+#define DMA_MEM_SIZE 10
+
+typedef uint8_t uint_dma;
+typedef uint32_t uint_per_cycle;
 #endif
 
 uint16_t XY2_100::lastX;
@@ -42,13 +55,15 @@ void *XY2_100::pingBuffer;
 void *XY2_100::pongBuffer;
 DMAChannel XY2_100::dma;
 
-// static: file scope variable; DMAMEM: specifies this variable save to dmabuffers
-// DMAMEM: #define DMAMEM __attribute__ ((section(".dmabuffers"), used))
-static DMAMEM uint32_t pingMemory[10];
-static DMAMEM uint32_t pongMemory[10];
+
 
 // Bit0: 0=Ping buffer content is beeing transmitted
 static volatile uint8_t txPing = 0;
+
+// static: file scope variable; DMAMEM: specifies this variable save to dmabuffers
+// DMAMEM: #define DMAMEM __attribute__ ((section(".dmabuffers"), used))
+static DMAMEM uint32_t pingMemory[DMA_MEM_SIZE];
+static DMAMEM uint32_t pongMemory[DMA_MEM_SIZE];
 
 XY2_100::XY2_100() {
     pingBuffer = pingMemory;
@@ -68,7 +83,9 @@ void XY2_100::begin(void) {
     frequency = 4000000;  // 4MHz
 
     // DMA channel writes the data
-    dma.sourceBuffer((uint8_t *) pingBuffer, bufsize);
+    dma.sourceBuffer((uint_dma *) pingBuffer, bufsize);
+
+
     dma.transferSize(1);
     dma.transferCount(bufsize);
     dma.disableOnCompletion();
@@ -77,10 +94,10 @@ void XY2_100::begin(void) {
 #if defined(__IMXRT1062__)                    // Teensy 4.1
     // GPIO1_DR 32bit, here we utilize 16~23bit
     GPIO1_DR_CLEAR = 0xFFFFFFFF;
-    GPIO1_DR = 0xFFFFFFFF & GPIO_DATA_OUT_MASK;
+    GPIO1_DR = 0x00000000;
 
     IOMUXC_GPR_GPR26 &= ~(0x00FF0000);             // select standard GPIO instead of fast GPIO. 0 for GPIO1, 1 for GPIO6
-    GPIO1_GDIR |= GPIO1_XY2_16_8(0xFF);            // set 16~23 bit as output. 0 for input, 1 for output.
+    GPIO1_GDIR |= 0xFF0000;                        // set 16~23 bit as output. 0 for input, 1 for output.
 
     IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_00 = 5;       // route pin19 pad AD_B1_00 (GPIO1_IO16) to GPIO module.
     IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_01 = 5;       // route pin18 pad AD_B1_00 (GPIO1_IO17) to GPIO module.
@@ -92,7 +109,13 @@ void XY2_100::begin(void) {
     IOMUXC_SW_MUX_CTL_PAD_GPIO_AD_B1_07 = 5;       // route pin16 pad AD_B1_00 (GPIO1_IO23) to GPIO module.
 
     dma.destination(GPIO1_DR);
-    dma.triggerAtHardwareEvent(DMAMUX_SOURCE_FLEXIO1_REQUEST0);
+
+    CCM_CSCMR1 &= 0xFFFFFFBF;                      // set PERCLK_CLK_SEL to 0: select the 150MHz click.
+    PIT_MCR = 0x00;                                // turn on PIT
+    IMXRT_PIT_CHANNELS[0].LDVAL = F_BUS_ACTUAL / frequency;      // Default click frequency is 132MHz
+    IMXRT_PIT_CHANNELS[0].TCTRL |= PIT_TCTRL_TEN;  // Start PIT0
+
+    dma.triggerContinuously();
 #endif
 
 #if defined(__MK20DX256__) || defined(__MKL26Z64__)
@@ -193,10 +216,11 @@ void XY2_100::isr(void) {
     dma.clearInterrupt();
     if (txPing & 2) { // x & 10
         txPing &= ~2;
+
         if (txPing & 1) {
-            dma.sourceBuffer((uint8_t *) pongBuffer, 40);
+            dma.sourceBuffer((uint_dma *) pongBuffer, 40);
         } else {
-            dma.sourceBuffer((uint8_t *) pingBuffer, 40);
+            dma.sourceBuffer((uint_dma *) pingBuffer, 40);
         }
     }
     //txPing |= 128;
@@ -285,7 +309,7 @@ void XY2_100::setXY(uint16_t X, uint16_t Y) {
      */
     for (int i = 19; i >= 0; i--) {
         int j = 0;
-        uint32_t d;
+        uint_per_cycle d;
         // Ch1[i] = 1, Ch2[i] = 1, j = 11
         // Ch1[i] = 0, Ch2[i] = 1, j = 10
         // Ch1[i] = 1, Ch2[i] = 0, j = 01
@@ -293,16 +317,16 @@ void XY2_100::setXY(uint16_t X, uint16_t Y) {
         if (Ch1 & (1 << i)) j = 1;
         if (Ch2 & (1 << i)) j |= 2;
 
-        d = Sync1[j]; // 1101 0010 1100 0011
+        d = Sync1[j] << GPIO_PIN_SHIFT;
         i--;
         j = 0;
         if (Ch1 & (1 << i)) j = 1;
         if (Ch2 & (1 << i)) j |= 2;
 
         if (i != 0) {
-            d |= (uint32_t) Sync1[j] << 16; // 1101 0010 | 1100 0011 | 1101 0010 | 1100 0011
+            d |= (uint_per_cycle) (Sync1[j] << GPIO_PIN_SHIFT) << 16; // 1101 0010 | 1100 0011 | 1101 0010 | 1100 0011
         } else {
-            d |= (uint32_t) Sync0[j] << 16;
+            d |= (uint_per_cycle) (Sync0[j] << GPIO_PIN_SHIFT) << 16;
         }
 
         *p++ = d;
