@@ -112,10 +112,18 @@ void XY2_100::begin(void) {
 
     CCM_CSCMR1 &= 0xFFFFFFBF;                      // set PERCLK_CLK_SEL to 0: select the 150MHz click.
     PIT_MCR = 0x00;                                // turn on PIT
-    IMXRT_PIT_CHANNELS[0].LDVAL = F_BUS_ACTUAL / frequency;      // Default click frequency is 132MHz
-    IMXRT_PIT_CHANNELS[0].TCTRL |= PIT_TCTRL_TEN;  // Start PIT0
+//    IMXRT_PIT_CHANNELS[0].LDVAL = F_BUS_ACTUAL / frequency;      // Default click frequency is 132MHz
+//    IMXRT_PIT_CHANNELS[0].TCTRL |= PIT_TCTRL_TEN;  // Start PIT0
+
+    IMXRT_PIT_CHANNEL_t * pit = IMXRT_PIT_CHANNELS + dma.channel;
+    pit->LDVAL = F_BUS_ACTUAL / frequency;
+    pit->TCTRL |= PIT_TCTRL_TEN;
 
     dma.triggerContinuously();
+    volatile uint32_t *mux = &DMAMUX_CHCFG0 + dma.channel;
+    *mux |= DMAMUX_CHCFG_TRIG;
+
+    dma.enable();
 #endif
 
 #if defined(__MK20DX256__) || defined(__MKL26Z64__)
